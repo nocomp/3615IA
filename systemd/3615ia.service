@@ -1,0 +1,25 @@
+[Unit]
+Description=3615 IA - passerelle Minitel vers les modeles de langage
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/3615IA
+EnvironmentFile=/etc/3615ia.env
+ExecStart=/usr/bin/node src/server.mjs
+Restart=always
+RestartSec=5
+
+# Un service systemd n'herite pas de votre shell : les cles doivent etre
+# dans EnvironmentFile, jamais dans un export.
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/3615IA
+
+[Install]
+WantedBy=multi-user.target

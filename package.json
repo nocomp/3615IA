@@ -1,0 +1,16 @@
+{
+  "name": "3615ia",
+  "version": "1.0.0",
+  "description": "Passerelle Minitel vers les grands modeles de langage, en Videotex sur WebSocket",
+  "type": "module",
+  "main": "src/server.mjs",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "dev": "node --env-file=.env src/server.mjs",
+    "test": "node test/e2e.mjs"
+  },
+  "keywords": ["minitel", "videotex", "esp32", "llm", "retrocomputing", "teletel"],
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "dependencies": { "ws": "^8.18.0" }
+}
