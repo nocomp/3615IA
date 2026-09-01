@@ -1,0 +1,57 @@
+[
+  {
+    "nom": "CLAUDE",
+    "kind": "anthropic",
+    "model": "claude-haiku-4-5-20251001",
+    "modelEnv": "ANTHROPIC_MODEL",
+    "apiKeyEnv": "ANTHROPIC_API_KEY",
+    "workspaceEnv": "ANTHROPIC_WORKSPACE_ID",
+    "etiquette": "Anthropic"
+  },
+  {
+    "nom": "CHATGPT",
+    "kind": "openai",
+    "baseUrl": "https://api.openai.com/v1",
+    "model": "gpt-4o-mini",
+    "modelEnv": "OPENAI_MODEL",
+    "apiKeyEnv": "OPENAI_API_KEY",
+    "etiquette": "OpenAI"
+  },
+  {
+    "nom": "MISTRAL",
+    "kind": "openai",
+    "baseUrl": "https://api.mistral.ai/v1",
+    "model": "mistral-small-latest",
+    "modelEnv": "MISTRAL_MODEL",
+    "apiKeyEnv": "MISTRAL_API_KEY",
+    "etiquette": "Mistral AI"
+  },
+  {
+    "nom": "GEMINI",
+    "kind": "openai",
+    "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+    "model": "gemini-2.0-flash",
+    "modelEnv": "GEMINI_MODEL",
+    "apiKeyEnv": "GEMINI_API_KEY",
+    "etiquette": "Google"
+  },
+  {
+    "nom": "GROQ",
+    "kind": "openai",
+    "baseUrl": "https://api.groq.com/openai/v1",
+    "model": "llama-3.3-70b-versatile",
+    "modelEnv": "GROQ_MODEL",
+    "apiKeyEnv": "GROQ_API_KEY",
+    "etiquette": "Groq",
+    "actif": false
+  },
+  {
+    "nom": "LOCAL",
+    "kind": "openai",
+    "baseUrl": "http://127.0.0.1:11434/v1",
+    "model": "llama3.2",
+    "modelEnv": "LOCAL_MODEL",
+    "etiquette": "Ollama",
+    "actif": false
+  }
+]
