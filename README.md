@@ -5,7 +5,9 @@ Une passerelle qui branche un vrai Minitel sur les grands modèles de langage.
 ![Un Minitel 1B affichant l'accueil de 3615 IA et une réponse du modèle](docs/3615ia.jpg)
 
 ```
-Minitel 1B  --DIN-->  ESP32  --WiFi/WebSocket-->  3615 IA  --HTTP-->  LLM
+   Minitel 1B --DIN--> ESP32 --WiFi/ws--\
+                                         >-- 3615 IA --HTTP--> LLM
+   Navigateur -------- clavier/ws ------/
 ```
 
 Le Minitel affiche du Vidéotex à 1200 bauds sur 40 colonnes. Ce serveur fait la
@@ -13,9 +15,13 @@ traduction dans les deux sens : il encode les réponses du modèle en Vidéotex,
 décode les touches du clavier, et cadence l'envoi pour ne pas noyer la liaison
 série.
 
-Fonctionne avec Anthropic, OpenAI, Mistral, Google, Groq, OpenRouter — et avec
-**un modèle tournant sur votre réseau local** via Ollama, LM Studio ou
-llama.cpp.
+- Menu de services façon Télétel, numérotés, sélection à la touche Envoi
+- Anthropic en natif, plus tout backend au format OpenAI : OpenAI, Mistral,
+  Google, Groq, OpenRouter, DeepSeek
+- **Modèle local** via Ollama, LM Studio ou llama.cpp, sans clé ni cloud
+- **Clavier déporté** dans le navigateur, pour les Minitel aux touches fatiguées
+- Réponses en streaming, découpées mot à mot sur 40 colonnes
+- Une seule dépendance : `ws`
 
 ## Matériel
 
@@ -30,7 +36,13 @@ Aucune modification du Minitel n'est nécessaire.
 
 ## Installation
 
-Node.js 20 ou plus récent.
+**Node.js 20 ou plus récent.** Le serveur s'appuie sur `fetch` et les flux web
+pour lire le SSE, stabilisés à partir de cette version. Sur Node 18 le
+streaming peut se comporter de façon erratique, et `--env-file` n'existe pas.
+
+```bash
+node -v      # doit afficher v20 ou au-dela
+```
 
 ```bash
 git clone https://github.com/VOTRE-COMPTE/3615IA.git
@@ -46,6 +58,14 @@ Lancement :
 node --env-file=.env src/server.mjs
 ```
 
+Sur une version de Node antérieure à 20.6, `--env-file` n'existe pas ; chargez
+le fichier depuis le shell :
+
+```bash
+set -a; . ./.env; set +a
+node src/server.mjs
+```
+
 Le serveur affiche au démarrage les services qu'il a retenus, ceux qu'il a
 écartés faute de clé, et l'adresse d'écoute :
 
@@ -56,12 +76,45 @@ Le serveur affiche au démarrage les services qu'il a retenus, ceux qu'il a
   service       : LOCAL (openai) llama3.2
   ecarte        : CHATGPT (OPENAI_API_KEY non definie)
 
-  ecoute        : ws://0.0.0.0:8080/
+  Minitel       : ws://0.0.0.0:8080/
+  clavier       : http://0.0.0.0:8080/clavier
   debit         : 1200 bauds
 ```
 
 Il ne reste qu'à ajouter `ws://ADRESSE-DU-SERVEUR:8080/` dans la liste de
 serveurs du firmware ESP32.
+
+## Clavier déporté
+
+Quarante ans de caoutchouc conducteur, ça s'oxyde : sur beaucoup de Minitel,
+des touches ne répondent plus. Le serveur expose donc un clavier de secours sur
+le même port :
+
+```
+http://ADRESSE-DU-SERVEUR:8080/clavier
+```
+
+Ouvrez cette page sur un téléphone ou un ordinateur, tapez, appuyez sur ENVOI.
+Le texte s'affiche sur le Minitel caractère par caractère, exactement comme
+s'il venait du port DIN, et la réponse arrive sur le tube. Les touches de
+fonction (Correction, Annulation, Sommaire, Guide, Suite) sont également
+disponibles.
+
+Aucune modification du firmware ESP32 : c'est une seconde WebSocket côté
+serveur, sur le chemin `/clavier`. Le clavier physique du Minitel continue de
+fonctionner en parallèle, les deux sources se mélangent librement.
+
+Pour restreindre l'accès, définissez `CLAVIER_TOKEN` : la page devra alors être
+ouverte avec `?jeton=VOTRE-JETON` et toute connexion sans jeton valide est
+refusée.
+
+Si la page s'affiche mais reste marquée « deconnecte », c'est presque toujours
+le jeton : la page est servie en HTTP simple et se charge quel que soit le
+jeton, mais l'ouverture de la WebSocket est refusée en 401. Vérifiez que
+`?jeton=...` figure bien dans l'URL.
+
+C'est aussi bien pratique pour filmer : on tape hors champ, la caméra ne voit
+que l'écran qui se remplit.
 
 ## Configuration des services
 
@@ -162,6 +215,8 @@ Console, Settings → Workspaces, sous la forme `wrkspc_...`).
 | **Sommaire** | Retour au menu des services |
 | **Guide** | Rappel des touches |
 
+Toutes disponibles également depuis le clavier déporté.
+
 ## Variables d'environnement
 
 | Variable | Défaut | Rôle |
@@ -171,6 +226,7 @@ Console, Settings → Workspaces, sous la forme `wrkspc_...`).
 | `BAUDS` | `1200` | Débit réel du port DIN, sert à cadencer l'envoi |
 | `SERVICES` | — | Chemin d'un `services.json` alternatif |
 | `MAX_TOURS` | `12` | Nombre de messages conservés dans l'historique |
+| `CLAVIER_TOKEN` | — | Si défini, exigé pour accéder au clavier déporté |
 
 Plus les variables citées par `apiKeyEnv` et `modelEnv` dans votre
 configuration.
@@ -210,8 +266,9 @@ npm test
 ```
 
 Monte un faux backend SSE et un faux Minitel, puis vérifie l'encodage des
-accents, l'écho clavier, le respect des 40 colonnes et la préservation des
-espaces aux jointures du flux. Aucun accès réseau, aucune clé nécessaire.
+accents, l'écho clavier, le respect des 40 colonnes, la préservation des
+espaces aux jointures du flux et l'injection depuis le clavier déporté. Aucun
+accès réseau, aucune clé nécessaire.
 
 ## Service systemd
 
@@ -230,7 +287,8 @@ fichier d'environnement, pas dans un `export`.
 
 Le serveur est ouvert et sans authentification. Vos clés d'API restent côté
 serveur et ne transitent jamais vers le Minitel, mais n'importe qui connaissant
-l'adresse peut consommer vos crédits. Sur une machine exposée, restreignez
+l'adresse peut consommer vos crédits — et, sans `CLAVIER_TOKEN`, écrire sur
+votre Minitel. Sur une machine exposée, restreignez
 l'accès par pare-feu, ou placez un reverse proxy devant.
 
 La liaison est en clair. Le TLS fonctionne sur ESP32 mais alourdit la poignée

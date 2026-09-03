@@ -7,6 +7,10 @@
  * Voir README.md pour l'installation et la configuration.
  */
 
+import http from "node:http";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { chargerServices } from "./config.mjs";
 import { creerBackend } from "./providers.mjs";
@@ -21,6 +25,10 @@ const BAUDS     = Number(process.env.BAUDS ?? 1200);
 const CHEMIN    = process.env.SERVICES ?? null;
 const MAX_TOURS = Number(process.env.MAX_TOURS ?? 12);
 const MAX_SAISIE = 200;
+const JETON     = process.env.CLAVIER_TOKEN ?? null;   // protege le clavier deporte
+
+const ICI = dirname(fileURLToPath(import.meta.url));
+const PAGE_CLAVIER = readFileSync(join(ICI, "clavier.html"));
 
 const SYSTEM = `Tu t'affiches sur un Minitel 1B : ecran de 40 colonnes sur 24 \
 lignes, liaison a 1200 bauds. Chaque caractere coute du temps d'affichage.
@@ -147,15 +155,26 @@ class Session {
   // --- clavier -------------------------------------------------------------
 
   onOctets(buf) {
-    for (const ev of decoderClavier(buf, this.etatClavier)) {
-      if (ev.type === "car") {
-        if (this.mode === "occupe" || this.saisie.length >= MAX_SAISIE) continue;
-        this.saisie += ev.valeur;
-        this.ecrire(ev.valeur);            // echo assure par le serveur
-        continue;
-      }
-      this.onTouche(ev.valeur);
+    for (const ev of decoderClavier(buf, this.etatClavier)) this.onEvenement(ev);
+  }
+
+  /** Point d'entree unique : clavier du Minitel comme clavier deporte. */
+  onEvenement(ev) {
+    if (ev.type === "car") {
+      if (this.mode === "occupe" || this.saisie.length >= MAX_SAISIE) return;
+      this.saisie += ev.valeur;
+      this.ecrire(ev.valeur);              // echo assure par le serveur
+      return;
     }
+    this.onTouche(ev.valeur);
+  }
+
+  /** Injecte une ligne entiere, caractere par caractere, puis valide. */
+  injecterLigne(texte) {
+    for (const c of String(texte).slice(0, MAX_SAISIE)) {
+      this.onEvenement({ type: "car", valeur: c });
+    }
+    this.onEvenement({ type: "touche", valeur: "ENVOI" });
   }
 
   onTouche(touche) {
@@ -279,12 +298,60 @@ if (!services.length) {
   process.exit(1);
 }
 
-const wss = new WebSocketServer({ host: HOTE, port: PORT });
+// Registre des sessions Minitel, pour que le clavier deporte sache a qui parler.
+const sessions = new Set();
+const claviers = new Set();
 
-wss.on("connection", (ws, req) => {
+function minitelCourant() {
+  return [...sessions].at(-1) ?? null;   // la session la plus recemment ouverte
+}
+function prevenirClaviers() {
+  const dispo = minitelCourant() !== null;
+  for (const c of claviers) {
+    if (c.readyState === c.OPEN) c.send(JSON.stringify({ type: "etat", minitel: dispo }));
+  }
+}
+
+// --- serveur HTTP : sert la page du clavier deporte ------------------------
+
+const httpServer = http.createServer((req, res) => {
+  const chemin = new URL(req.url, "http://x").pathname;
+  if (chemin === "/clavier" || chemin === "/clavier/") {
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+    res.end(PAGE_CLAVIER);
+    return;
+  }
+  res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+  res.end("3615 IA\n\nMinitel  : ws://<hote>:" + PORT + "/\nClavier  : http://<hote>:" + PORT + "/clavier\n");
+});
+
+// --- deux WebSockets sur le meme port, distinguees par le chemin ------------
+
+const wsMinitel = new WebSocketServer({ noServer: true });
+const wsClavier = new WebSocketServer({ noServer: true });
+
+httpServer.on("upgrade", (req, socket, tete) => {
+  const url = new URL(req.url, "http://x");
+  if (url.pathname === "/clavier") {
+    if (JETON && url.searchParams.get("jeton") !== JETON) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    wsClavier.handleUpgrade(req, socket, tete, (ws) => wsClavier.emit("connection", ws, req));
+  } else {
+    wsMinitel.handleUpgrade(req, socket, tete, (ws) => wsMinitel.emit("connection", ws, req));
+  }
+});
+
+// --- Minitel ---------------------------------------------------------------
+
+wsMinitel.on("connection", (ws, req) => {
   const ip = req.socket.remoteAddress;
-  console.log(`[${ip}] connexion`);
+  console.log(`[${ip}] Minitel connecte`);
   const session = new Session(ws, ip, services);
+  sessions.add(session);
+  prevenirClaviers();
 
   // un seul service utilisable : on saute le menu
   if (services.length === 1) {
@@ -300,9 +367,42 @@ wss.on("connection", (ws, req) => {
     const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
     session.onOctets(isBinary ? buf : Buffer.from(buf.toString("latin1"), "latin1"));
   });
-  ws.on("close", () => { console.log(`[${ip}] deconnexion`); session.fermer(); });
-  ws.on("error", (e) => { console.error(`[${ip}]`, e.message); session.fermer(); });
+  const fin = () => { sessions.delete(session); session.fermer(); prevenirClaviers(); };
+  ws.on("close", () => { console.log(`[${ip}] Minitel deconnecte`); fin(); });
+  ws.on("error", (e) => { console.error(`[${ip}]`, e.message); fin(); });
 });
 
-console.log(`\n  ecoute        : ws://${HOTE}:${PORT}/`);
-console.log(`  debit         : ${BAUDS} bauds`);
+// --- clavier deporte -------------------------------------------------------
+// Le clavier du Minitel n'est pas toujours en etat : quarante ans de caoutchouc
+// conducteur, ca s'oxyde. Cette seconde WebSocket injecte la saisie dans la
+// session comme si elle venait du port DIN, sans toucher au firmware ESP32.
+
+wsClavier.on("connection", (ws, req) => {
+  const ip = req.socket.remoteAddress;
+  console.log(`[${ip}] clavier deporte connecte`);
+  claviers.add(ws);
+  ws.send(JSON.stringify({ type: "etat", minitel: minitelCourant() !== null }));
+
+  ws.on("message", (data) => {
+    let m;
+    try { m = JSON.parse(data.toString("utf8")); } catch { return; }
+    const session = minitelCourant();
+    if (!session) {
+      ws.send(JSON.stringify({ type: "info", texte: "aucun Minitel connecte" }));
+      return;
+    }
+    if (m.type === "ligne" && typeof m.texte === "string") session.injecterLigne(m.texte);
+    else if (m.type === "touche" && typeof m.valeur === "string") {
+      session.onEvenement({ type: "touche", valeur: m.valeur });
+    }
+  });
+
+  ws.on("close", () => { claviers.delete(ws); console.log(`[${ip}] clavier deporte deconnecte`); });
+  ws.on("error", () => claviers.delete(ws));
+});
+
+httpServer.listen(PORT, HOTE, () => {
+  console.log(`\n  Minitel       : ws://${HOTE}:${PORT}/`);
+  console.log(`  clavier       : http://${HOTE}:${PORT}/clavier${JETON ? "?jeton=" + JETON : ""}`);
+  console.log(`  debit         : ${BAUDS} bauds`);
+});

@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="fr">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>3615 IA - clavier deporte</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; padding: 1rem;
+    font: 16px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    background: #0b1020; color: #cfe3ff;
+    display: flex; flex-direction: column; gap: .75rem;
+    min-height: 100dvh;
+  }
+  header { display: flex; align-items: baseline; gap: .6rem; }
+  h1 { font-size: 1.1rem; margin: 0; letter-spacing: .12em; color: #7fd4ff; }
+  #etat { font-size: .78rem; opacity: .75; margin-left: auto; }
+  #etat.ok { color: #7cf29b; opacity: 1; }
+  #etat.ko { color: #ff8080; opacity: 1; }
+
+  textarea {
+    width: 100%; min-height: 6.5rem; resize: vertical; flex: 0 0 auto;
+    padding: .7rem; border-radius: .5rem;
+    border: 1px solid #26406e; background: #060a16; color: #e8f2ff;
+    font: inherit;
+  }
+  #compteur { font-size: .75rem; opacity: .55; text-align: right; margin-top: -.5rem; }
+  #compteur.limite { color: #ffb454; opacity: 1; }
+
+  .rangee { display: flex; flex-wrap: wrap; gap: .5rem; flex: 0 0 auto; }
+  button {
+    flex: 1 1 auto; min-width: 6.5rem; padding: .8rem .6rem;
+    border-radius: .5rem; border: 1px solid #2f4a7d;
+    background: #16233f; color: #cfe3ff;
+    font: inherit; font-size: .8rem; letter-spacing: .06em;
+    cursor: pointer; touch-action: manipulation;
+  }
+  button:active { background: #24365c; }
+  button:disabled { opacity: .35; cursor: default; }
+  #envoyer { flex: 0 0 auto; width: 100%; padding: 1rem; background: #1d5e35; border-color: #2f8f52; color: #d8ffe6; font-size: .95rem; }
+  #envoyer:active { background: #257a44; }
+
+  #journal {
+    flex: 1; overflow-y: auto; min-height: 4rem;
+    font-size: .75rem; opacity: .6; white-space: pre-wrap; word-break: break-word;
+  }
+  footer { font-size: .7rem; opacity: .45; }
+</style>
+
+<header>
+  <h1>3615 IA</h1>
+  <span id="etat">connexion...</span>
+</header>
+
+<textarea id="saisie" placeholder="Votre message pour le Minitel..." autocapitalize="sentences" autocomplete="off" spellcheck="true"></textarea>
+<div id="compteur">0 / 200</div>
+
+<button id="envoyer" disabled>ENVOI</button>
+
+<div class="rangee">
+  <button data-touche="CORRECTION" disabled>CORRECTION</button>
+  <button data-touche="ANNUL" disabled>ANNULATION</button>
+</div>
+<div class="rangee">
+  <button data-touche="SOMMAIRE" disabled>SOMMAIRE</button>
+  <button data-touche="GUIDE" disabled>GUIDE</button>
+  <button data-touche="SUITE" disabled>SUITE</button>
+</div>
+
+<div id="journal"></div>
+<footer>Le texte s'affiche sur le Minitel comme s'il etait tape sur son clavier.</footer>
+
+<script>
+const MAX = 200;
+const saisie   = document.getElementById("saisie");
+const compteur = document.getElementById("compteur");
+const etat     = document.getElementById("etat");
+const journal  = document.getElementById("journal");
+const boutons  = [...document.querySelectorAll("button")];
+
+let ws = null, delaiReconnexion = 500;
+
+function noter(texte) {
+  const h = new Date().toLocaleTimeString("fr-FR");
+  journal.textContent = `${h}  ${texte}\n` + journal.textContent;
+}
+
+function activer(oui) {
+  boutons.forEach((b) => (b.disabled = !oui));
+}
+
+function connecter() {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const jeton = new URLSearchParams(location.search).get("jeton") ?? "";
+  ws = new WebSocket(`${proto}//${location.host}/clavier${jeton ? "?jeton=" + encodeURIComponent(jeton) : ""}`);
+
+  ws.onopen = () => {
+    delaiReconnexion = 500;
+    etat.textContent = "connecte"; etat.className = "ok";
+    activer(true);
+  };
+  ws.onclose = () => {
+    etat.textContent = "deconnecte"; etat.className = "ko";
+    activer(false);
+    setTimeout(connecter, delaiReconnexion);
+    delaiReconnexion = Math.min(delaiReconnexion * 2, 8000);
+  };
+  ws.onerror = () => { etat.textContent = "erreur"; etat.className = "ko"; };
+  // Cas le plus frequent : CLAVIER_TOKEN est defini cote serveur mais absent
+  // de l'URL. Le serveur refuse alors l'upgrade en 401 et la socket se ferme
+  // aussitot, alors que la page elle-meme s'est chargee normalement.
+  if (!jeton) noter("aucun jeton dans l'URL : ajoutez ?jeton=... si le serveur en exige un");
+  ws.onmessage = (e) => {
+    let m; try { m = JSON.parse(e.data); } catch { return; }
+    if (m.type === "etat") {
+      etat.textContent = m.minitel ? "Minitel en ligne" : "aucun Minitel";
+      etat.className = m.minitel ? "ok" : "ko";
+    }
+    if (m.type === "info") noter(m.texte);
+  };
+}
+
+function emettre(objet) {
+  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(objet));
+}
+
+saisie.addEventListener("input", () => {
+  if (saisie.value.length > MAX) saisie.value = saisie.value.slice(0, MAX);
+  compteur.textContent = `${saisie.value.length} / ${MAX}`;
+  compteur.classList.toggle("limite", saisie.value.length >= MAX);
+});
+
+document.getElementById("envoyer").addEventListener("click", () => {
+  const texte = saisie.value.trim();
+  if (!texte) return;
+  emettre({ type: "ligne", texte });
+  noter("> " + texte);
+  saisie.value = "";
+  compteur.textContent = `0 / ${MAX}`;
+  compteur.classList.remove("limite");
+  saisie.focus();
+});
+
+// Entree envoie, Maj+Entree passe a la ligne
+saisie.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    document.getElementById("envoyer").click();
+  }
+});
+
+for (const b of document.querySelectorAll("[data-touche]")) {
+  b.addEventListener("click", () => {
+    emettre({ type: "touche", valeur: b.dataset.touche });
+    noter("[" + b.dataset.touche + "]");
+  });
+}
+
+connecter();
+</script>
+</html>

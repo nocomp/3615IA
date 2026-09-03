@@ -94,5 +94,27 @@ console.log("  40 colonnes respectees:", trop.length === 0 ? "OK" : "ECHEC " + J
 console.log("  espaces preserves     :", /Bonjour depuis 1982/.test(texte) ? "OK" : "ECHEC");
 console.log("  reponse complete      :", /quarante\s*\n?\s*colonnes\./.test(texte) ? "OK" : "ECHEC");
 
-ws.close(); serveur.kill(); faux.close();
+// --- clavier deporte --------------------------------------------------------
+const page = await fetch("http://127.0.0.1:9912/clavier");
+const html = await page.text();
+
+const clavier = new WebSocket("ws://127.0.0.1:9912/clavier");
+let etatRecu = null;
+clavier.on("message", (d) => { const m = JSON.parse(d); if (m.type === "etat") etatRecu = m; });
+await new Promise((r) => clavier.on("open", r));
+await attendre(200);
+
+ecran = [];
+clavier.send(JSON.stringify({ type: "ligne", texte: "salut par le clavier deporte" }));
+await attendre(1200);
+const distant = lire(ecran);
+
+console.log("\n--- CLAVIER DEPORTE " + "-".repeat(39));
+console.log(distant.split("\n").map((l) => "  |" + l).join("\n"));
+console.log("\n  page servie           :", page.status === 200 && html.includes("3615 IA") ? "OK" : "ECHEC");
+console.log("  Minitel detecte       :", etatRecu?.minitel === true ? "OK" : "ECHEC");
+console.log("  saisie injectee       :", distant.includes("salut par le clavier") ? "OK" : "ECHEC");
+console.log("  reponse obtenue       :", distant.includes("Bonjour depuis 1982") ? "OK" : "ECHEC");
+
+clavier.close(); ws.close(); serveur.kill(); faux.close();
 process.exit(0);
